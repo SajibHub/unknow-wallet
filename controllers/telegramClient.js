@@ -18,10 +18,14 @@ const telegramClient = () => {
         { command: "id", description: "Get your Telegram ID" },
         { command: "balance", description: "Get your balance" },
         { command: "send_money", description: "Send Money" },
+        { command: "withdraw", description: "Withdraw Money" },
         { command: "transaction", description: "Transaction History" },
         { command: "pin_setting", description: "Pin Setting" },
+        { command: "forget_pin", description: "Forget your pin" },
         { command: "referral", description: "Get your referral code" },
+        { command: "help", description: "Get help and support" }
     ]);
+
 
     bot.onText(/\/start/, async (msg, match) => {
         const chatId = msg.chat.id;
@@ -94,7 +98,9 @@ const telegramClient = () => {
         }
         //telegram user Id
         if (text == "/id") {
-            return bot.sendMessage(chatId, `Your Telegram ID is: ${userId}`);
+            return bot.sendMessage(chatId, `🆔 *Your Telegram ID:*\n\`\`\`\n${userId}\n\`\`\``, {
+                parse_mode: "Markdown"
+            });
         }
 
         if (text == "/referral") {
@@ -265,12 +271,18 @@ const telegramClient = () => {
         //send money 
         if (text == "/send_money") {
             if (!userPinStep[chatId]) {
-                sendMoney[chatId] = { step: 1 };
-                return bot.sendMessage(chatId,
-                    "👤 Who are you sending money to?\n\n" +
-                    "📩 Please enter the *recipient's Telegram ID* to continue.",
-                    { parse_mode: "Markdown" }
-                );
+                const pinStatus = await axios.get(`${API}/api/v1/check/pin/${chatId}`);
+                if (pinStatus.data.pin === "new") {
+                    return bot.sendMessage(chatId, "❌ You don't have a PIN set. Please set a PIN first using /pin_setting.");
+                }
+                if (pinStatus.data.pin === "old") {
+                    sendMoney[chatId] = { step: 1 };
+                    return bot.sendMessage(chatId,
+                        "👤 Who are you sending money to?\n\n" +
+                        "📩 Please enter the *recipient's Telegram ID* to continue.",
+                        { parse_mode: "Markdown" }
+                    );
+                }
             }
         }
 
@@ -290,11 +302,16 @@ const telegramClient = () => {
 
         if (sendMoney[chatId]?.step === 2) {
             const amount = parseFloat(text);
-            if (isNaN(amount) || amount <= 0) {
-                return bot.sendMessage(chatId, "❌ *Invalid amount.*\n\nPlease enter a valid number in BDT to continue.", {
+            if (
+                isNaN(amount) ||
+                amount <= 0 ||
+                !Number.isInteger(amount)
+            ) {
+                return bot.sendMessage(chatId, "❌ *Invalid Amount*\n\nPlease enter a valid amount in whole BDT (like 10, 50, 100).\nDecimals such as 5.5 or 10.75 are not allowed.", {
                     parse_mode: "Markdown"
                 });
             }
+
             sendMoney[chatId].amount = amount;
             sendMoney[chatId].step = 3;
             return bot.sendMessage(chatId,
@@ -320,12 +337,13 @@ const telegramClient = () => {
 
                 if (status == 201) {
 
-                    bot.sendMessage(chatId, `✅ *৳${parseFloat(sendMoney[chatId]?.amount)}* has been successfully sent to *${sendMoney[chatId].recipientId}*.\n\n🧾 _Transaction: Send Money_`, {
+                    await bot.sendMessage(chatId, `✅ *৳${parseFloat(sendMoney[chatId]?.amount)}* has been successfully sent to *${sendMoney[chatId].recipientId}*.\n\n🧾 _Transaction: Send Money_`, {
                         parse_mode: "Markdown"
                     });
-                    bot.sendMessage(sendMoney[chatId]?.recipientId, `🎉 *You have received ৳${parseFloat(sendMoney[chatId]?.amount)}!* \n\n📨 From: *${chatId}*\n🧾 _Transaction: Send Money_`, {
+                    await bot.sendMessage(sendMoney[chatId]?.recipientId, `🎉 *You have received ৳${parseFloat(sendMoney[chatId]?.amount)}!* \n\n📨 From: *${chatId}*\n🧾 _Transaction: Send Money_`, {
                         parse_mode: "Markdown"
                     });
+                    delete sendMoney[chatId];
                 }
             } catch (error) {
                 console.log(error)
@@ -345,29 +363,29 @@ const telegramClient = () => {
             const header = `📄 *Transaction History*\n_Page ${page} of ${totalPages}_\n\n`;
 
             const body = sliced.map(tx => {
-                const from = tx.from.startsWith('@') 
-                  ? `[${tx.from}](https://t.me/${tx.from.replace('@', '')})` 
-                  : `\`${tx.from}\``;
-              
-                const to = tx.to.startsWith('@') 
-                  ? `[${tx.to}](https://t.me/${tx.to.replace('@', '')})` 
-                  : `\`${tx.to}\``;
-              
+                const from = tx.from.startsWith('@')
+                    ? `[${tx.from}](https://t.me/${tx.from.replace('@', '')})`
+                    : `\`${tx.from}\``;
+
+                const to = tx.to.startsWith('@')
+                    ? `[${tx.to}](https://t.me/${tx.to.replace('@', '')})`
+                    : `\`${tx.to}\``;
+
                 const typeEmoji = tx.transactionType.includes("send") ? "📤" :
-                                  tx.transactionType.includes("receive") ? "📥" :
-                                  tx.transactionType.includes("referral") ? "🎁" : "🔁";
-              
+                    tx.transactionType.includes("receive") ? "📥" :
+                        tx.transactionType.includes("referral") ? "🎁" : "🔁";
+
                 return (
-                  `━━━━━━━━━━━━━━\n` +
-                  `🆔 *TX ID:* \`${tx._id}\`\n` +
-                  `💰 *Amount:* *৳${tx.amount.toLocaleString()}* BDT\n` +
-                  `${typeEmoji} *Type:* ${tx.transactionType.replace(/_/g, ' ').toUpperCase()}\n` +
-                  `👤 *From:* ${from}\n` +
-                  `👥 *To:* ${to}\n` +
-                  `🕒 *Time:* \`${tx.time}\`\n`
+                    `━━━━━━━━━━━━━━\n` +
+                    `🆔 *TX ID:* \`${tx._id}\`\n` +
+                    `💰 *Amount:* *৳${tx.amount.toLocaleString()}* BDT\n` +
+                    `${typeEmoji} *Type:* ${tx.transactionType.replace(/_/g, ' ').toUpperCase()}\n` +
+                    `👤 *From:* ${from}\n` +
+                    `👥 *To:* ${to}\n` +
+                    `🕒 *Time:* \`${tx.time}\`\n`
                 );
-              }).join('\n');
-              
+            }).join('\n');
+
 
             return { text: header + body, totalPages };
         };
@@ -446,6 +464,40 @@ const telegramClient = () => {
                 }
             });
         });
+
+        // withdraw money
+
+        if (text === "/withdraw") {
+            return bot.sendMessage(chatId, "🚧 *Withdraw Feature Coming Soon!*\n\nWe're currently working on this feature. Please check back later for updates. Thank you for your patience!", {
+                parse_mode: "Markdown"
+            });
+        }
+
+        // forget pin
+        if (text === "/forget_pin") {
+            return bot.sendMessage(chatId, "🛠️ *Coming Soon*\nThis feature isn't available yet.", {
+                parse_mode: "Markdown"
+            });
+        }
+
+        // help 
+        if (text === "/help") {
+            return bot.sendMessage(chatId,
+                "🆘 *Bot Help & Commands Guide*\n\n" +
+                "Here’s what I can do for you:\n\n" +
+                "🔹 `/id` — Get your Telegram user ID.\n" +
+                "💰 `/balance` — Check your current balance.\n" +
+                "💸 `/send_money` — Transfer money to another user.\n" +
+                "🏧 `/withdraw` — Withdraw funds from your balance. *(Coming Soon)*\n" +
+                "📄 `/transaction` — View your recent transaction history.\n" +
+                "🔐 `/forget_pin` — Reset your PIN using a verification code.\n" +
+                "🎁 `/referral` — Get your referral code and earn rewards.\n" +
+                "📞 `/help` — You're here! Get help and support info.\n\n" +
+                "If you face any issue, just message here or use /referral to invite friends and earn.",
+                { parse_mode: "Markdown" }
+            );
+        }
+
     })
 }
 
