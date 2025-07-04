@@ -9,11 +9,16 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 const userPinStep = {};
 const userChangePinStep = {};
+const sendMoney = {}
+const userCache = new Map();
+
 
 const telegramClient = () => {
     bot.setMyCommands([
+        { command: "id", description: "Get your Telegram ID" },
         { command: "balance", description: "Get your balance" },
         { command: "send_money", description: "Send Money" },
+        { command: "transaction", description: "Transaction History" },
         { command: "pin_setting", description: "Pin Setting" },
         { command: "referral", description: "Get your referral code" },
     ]);
@@ -56,8 +61,8 @@ const telegramClient = () => {
                             }
                         )
                         if (response.status == 201) {
-                            bot.sendMessage(chatId, `Referral successful! You have been referred by ${referralCode}.`);
-                            bot.sendMessage(referralCode, `🎉 You have successfully referred a user! User ID: ${userId}`);
+                            bot.sendMessage(chatId, `Referral successful! You have been referred by ${referralCode}. You received 50 BDT bonus!`);
+                            bot.sendMessage(referralCode, `🎉 You have successfully referred a user! User ID: ${userId}. You received 100 BDT bonus!`);
                         }
                     } catch (error) {
                         bot.sendMessage(chatId, error.response?.data?.message);
@@ -75,11 +80,21 @@ const telegramClient = () => {
         const chatId = msg.chat.id;
         const userId = msg.from.id;
         const text = msg.text;
-        
+
         if (text.startsWith("/") && text !== "/pin_setting") {
             if (userPinStep[chatId]) {
                 delete userPinStep[chatId];
             }
+        }
+
+        if (text.startsWith("/") && text !== "/send_money") {
+            if (userPinStep[chatId]) {
+                delete sendMoney[chatId];
+            }
+        }
+        //telegram user Id
+        if (text == "/id") {
+            return bot.sendMessage(chatId, `Your Telegram ID is: ${userId}`);
         }
 
         if (text == "/referral") {
@@ -171,6 +186,7 @@ const telegramClient = () => {
             return;
         }
 
+        // new pin set
         if (userPinStep[chatId] === "awaiting_new_pin") {
             if (/^\d{6}$/.test(text)) {
                 const newPin = text;
@@ -202,7 +218,7 @@ const telegramClient = () => {
             }
             return;
         }
-
+        // pin change step 1
         if (userChangePinStep[chatId]?.step === 1) {
             if (/^\d{6}$/.test(text)) {
                 userChangePinStep[chatId] = userChangePinStep[chatId];
@@ -215,6 +231,7 @@ const telegramClient = () => {
             return;
         }
 
+        // pin change step 2
         if (userChangePinStep[chatId]?.step === 2) {
             if (/^\d{6}$/.test(text)) {
                 const waiting = await bot.sendMessage(chatId, "🔐 Saving your new PIN...");
@@ -245,7 +262,190 @@ const telegramClient = () => {
             return;
         }
 
+        //send money 
+        if (text == "/send_money") {
+            if (!userPinStep[chatId]) {
+                sendMoney[chatId] = { step: 1 };
+                return bot.sendMessage(chatId,
+                    "👤 Who are you sending money to?\n\n" +
+                    "📩 Please enter the *recipient's Telegram ID* to continue.",
+                    { parse_mode: "Markdown" }
+                );
+            }
+        }
 
+        if (sendMoney[chatId]?.step === 1) {
+            const recipientId = text;
+            if (!/^\d+$/.test(recipientId)) {
+                return bot.sendMessage(chatId, "❌ *Invalid Telegram ID.*\n\nPlease enter a valid Telegram ID to proceed.", {
+                    parse_mode: "Markdown"
+                });
+            }
+            sendMoney[chatId].recipientId = recipientId;
+            sendMoney[chatId].step = 2;
+            return bot.sendMessage(chatId, "💰 Please enter the *amount* you want to send (in BDT):", {
+                parse_mode: "Markdown"
+            });
+        }
+
+        if (sendMoney[chatId]?.step === 2) {
+            const amount = parseFloat(text);
+            if (isNaN(amount) || amount <= 0) {
+                return bot.sendMessage(chatId, "❌ *Invalid amount.*\n\nPlease enter a valid number in BDT to continue.", {
+                    parse_mode: "Markdown"
+                });
+            }
+            sendMoney[chatId].amount = amount;
+            sendMoney[chatId].step = 3;
+            return bot.sendMessage(chatId,
+                `🔔 *Transaction Preview:*\n\n` +
+                `• Amount: *৳${amount}*\n` +
+                `• Recipient ID: *${sendMoney[chatId].recipientId}*\n\n` +
+                `🔐 _Please type your PIN to confirm the transaction._`,
+                { parse_mode: "Markdown" }
+            );
+        }
+
+        if (sendMoney[chatId]?.step === 3) {
+            await bot.sendMessage(chatId, "*⏳ Please wait...*\n\nVerifying your PIN and completing the transaction.", {
+                parse_mode: "Markdown"
+            });
+            try {
+                const { data, status } = await axios.post(`${API}/api/v1/send-money`, {
+                    senderId: chatId,
+                    receiverId: sendMoney[chatId]?.recipientId,
+                    amount: parseFloat(sendMoney[chatId]?.amount),
+                    pin: text
+                }, { headers: { "Content-Type": "application/json" } })
+
+                if (status == 201) {
+
+                    bot.sendMessage(chatId, `✅ *৳${parseFloat(sendMoney[chatId]?.amount)}* has been successfully sent to *${sendMoney[chatId].recipientId}*.\n\n🧾 _Transaction: Send Money_`, {
+                        parse_mode: "Markdown"
+                    });
+                    bot.sendMessage(sendMoney[chatId]?.recipientId, `🎉 *You have received ৳${parseFloat(sendMoney[chatId]?.amount)}!* \n\n📨 From: *${chatId}*\n🧾 _Transaction: Send Money_`, {
+                        parse_mode: "Markdown"
+                    });
+                }
+            } catch (error) {
+                console.log(error)
+                delete sendMoney[chatId]
+                return bot.sendMessage(chatId, `❌ *Transaction failed!*\n\nError: ${error.response?.data?.message}`, {
+                    parse_mode: "Markdown"
+                });
+
+            }
+        }
+
+        //transaction history 
+        const formatTransactions = (transactions, page = 1, pageSize = 10) => {
+            const totalPages = Math.ceil(transactions.length / pageSize);
+            const sliced = transactions.slice((page - 1) * pageSize, page * pageSize);
+
+            const header = `📄 *Transaction History*\n_Page ${page} of ${totalPages}_\n\n`;
+
+            const body = sliced.map(tx => {
+                const from = tx.from.startsWith('@') 
+                  ? `[${tx.from}](https://t.me/${tx.from.replace('@', '')})` 
+                  : `\`${tx.from}\``;
+              
+                const to = tx.to.startsWith('@') 
+                  ? `[${tx.to}](https://t.me/${tx.to.replace('@', '')})` 
+                  : `\`${tx.to}\``;
+              
+                const typeEmoji = tx.transactionType.includes("send") ? "📤" :
+                                  tx.transactionType.includes("receive") ? "📥" :
+                                  tx.transactionType.includes("referral") ? "🎁" : "🔁";
+              
+                return (
+                  `━━━━━━━━━━━━━━\n` +
+                  `🆔 *TX ID:* \`${tx._id}\`\n` +
+                  `💰 *Amount:* *৳${tx.amount.toLocaleString()}* BDT\n` +
+                  `${typeEmoji} *Type:* ${tx.transactionType.replace(/_/g, ' ').toUpperCase()}\n` +
+                  `👤 *From:* ${from}\n` +
+                  `👥 *To:* ${to}\n` +
+                  `🕒 *Time:* \`${tx.time}\`\n`
+                );
+              }).join('\n');
+              
+
+            return { text: header + body, totalPages };
+        };
+
+        const generateKeyboard = (page, totalPages) => {
+            const prev = { text: "⬅️ Prev", callback_data: `history_page_${page - 1}` };
+            const next = { text: "➡️ Next", callback_data: `history_page_${page + 1}` };
+            const current = { text: `Page ${page}/${totalPages}`, callback_data: "noop" };
+
+            return [
+                [
+                    ...(page > 1 ? [prev] : []),
+                    current,
+                    ...(page < totalPages ? [next] : [])
+                ]
+            ];
+        };
+
+        if (text == "/transaction") {
+            await bot.sendMessage(chatId, "⏳ *Please wait...*\n\nWe are fetching your transaction history.", {
+                parse_mode: "Markdown"
+            });
+
+            try {
+                // Step 2: Axios API call
+                const { data } = await axios.get(`${API}/api/v1/transaction/${chatId}`);
+                const transactions = data.transactions || [];
+
+                if (transactions.length === 0) {
+                    return bot.sendMessage(chatId, "❌ *No transactions found.*", {
+                        parse_mode: "Markdown"
+                    });
+                }
+
+                // Step 3: Send paginated first page
+                const page = 1;
+                const { text, totalPages } = formatTransactions(transactions, page);
+
+                // Optional: Cache per user if needed
+                userCache.set(chatId, transactions);
+
+                await bot.sendMessage(chatId, text, {
+                    parse_mode: "Markdown",
+                    reply_markup: {
+                        inline_keyboard: generateKeyboard(page, totalPages)
+                    }
+                });
+
+            } catch (err) {
+                console.log(err)
+                return bot.sendMessage(chatId, "❌ *Failed to load transaction history.*", {
+                    parse_mode: "Markdown"
+                });
+            }
+
+        }
+
+        bot.on('callback_query', async ({ data, message }) => {
+            if (!data.startsWith('history_page_')) return;
+
+            const chatId = message.chat.id;
+            const messageId = message.message_id;
+            const page = parseInt(data.replace('history_page_', ''), 10);
+
+            const transactions = userCache.get(chatId);
+            if (!transactions) return;
+
+            const { text, totalPages } = formatTransactions(transactions, page);
+
+            await bot.editMessageText(text, {
+                chat_id: chatId,
+                message_id: messageId,
+                parse_mode: "Markdown",
+                reply_markup: {
+                    inline_keyboard: generateKeyboard(page, totalPages)
+                }
+            });
+        });
     })
 }
 
