@@ -2,6 +2,7 @@
   "name": "unknow-wallet-telegram",
   "version": "1.0.0",
   "main": "app.js",
+  "type": "module",
   "scripts": {
     "start": "node app.js"
   },
@@ -10,6 +11,7 @@
   "description": "",
   "dependencies": {
     "axios": "^1.10.0",
+    "bcrypt": "^6.0.0",
     "compression": "^1.8.0",
     "cors": "^2.8.5",
     "dotenv": "^17.0.1",
