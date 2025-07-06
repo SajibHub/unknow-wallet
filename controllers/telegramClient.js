@@ -371,15 +371,20 @@ const telegramClient = () => {
                     ? `[${tx.to}](https://t.me/${tx.to.replace('@', '')})`
                     : `\`${tx.to}\``;
 
-                const typeEmoji = tx.transactionType.includes("send") ? "📤" :
-                    tx.transactionType.includes("receive") ? "📥" :
-                        tx.transactionType.includes("referral") ? "🎁" : "🔁";
+                const typeEmoji = tx.transactionType.includes("referral") ? "🎁" :
+                    tx.isSender ? "📤" : "📥";
+
+                const typeLabel = tx.transactionType.includes("referral")
+                    ? tx.transactionType.replace(/_/g, ' ').toUpperCase()
+                    : (tx.isSender ? "Send Money" : "Receive Money").toUpperCase();
+
+                const signedAmount = (tx.transactionType.includes("referral") ? "+" : (tx.isSender ? "-" : "+")) + tx.amount.toLocaleString();
 
                 return (
                     `━━━━━━━━━━━━━━\n` +
                     `🆔 *TX ID:* \`${tx._id}\`\n` +
-                    `💰 *Amount:* *৳${tx.amount.toLocaleString()}* BDT\n` +
-                    `${typeEmoji} *Type:* ${tx.transactionType.replace(/_/g, ' ').toUpperCase()}\n` +
+                    `💰 *Amount:* *${signedAmount}* BDT\n` +
+                    `${typeEmoji} *Type:* ${typeLabel}\n` +
                     `👤 *From:* ${from}\n` +
                     `👥 *To:* ${to}\n` +
                     `🕒 *Time:* \`${tx.time}\`\n`
