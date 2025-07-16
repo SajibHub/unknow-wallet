@@ -285,7 +285,7 @@ export const sendMoney = async (req, res) => {
             });
         }
 
-        if (senderId === receiverId) {
+        if (senderId == receiverId) {
             return res.status(400).json({
                 message: "You cannot send money to yourself."
             });

@@ -92,7 +92,7 @@ const telegramClient = () => {
         }
 
         if (text.startsWith("/") && text !== "/send_money") {
-            if (userPinStep[chatId]) {
+            if (sendMoney[chatId]) {
                 delete sendMoney[chatId];
             }
         }
@@ -195,32 +195,43 @@ const telegramClient = () => {
         // new pin set
         if (userPinStep[chatId] === "awaiting_new_pin") {
             if (/^\d{6}$/.test(text)) {
-                const newPin = text;
-
-                await bot.sendMessage(chatId, `🔐 Saving your new pin: ${newPin}...`);
-
-                try {
-                    const payload = {
-                        id: chatId,
-                        change: false,
-                        newPin: newPin
-                    };
-
-                    const response = await axios.put(`${API}/api/v1/pin/change`, payload);
-
-                    if (response.status === 200) {
-                        await bot.sendMessage(chatId, "✅ Your new pin has been saved successfully.");
-                    } else {
-                        await bot.sendMessage(chatId, "⚠️ Something went wrong while saving your pin.");
-                    }
-                } catch (error) {
-                    const errMsg = error.response?.data?.message || "❌ Failed to save your pin.";
-                    await bot.sendMessage(chatId, errMsg);
-                }
-
-                delete userPinStep[chatId];
+            userPinStep[chatId] = {
+                step: "confirm_new_pin",
+                newPin: text
+            };
+            await bot.sendMessage(chatId, "🔁 Please re-enter your new 6-digit PIN to confirm:");
             } else {
-                await bot.sendMessage(chatId, "❗ Please enter a valid 6-digit number.");
+            await bot.sendMessage(chatId, "❗ Please enter a valid 6-digit number.");
+            }
+            return;
+        }
+
+        if (
+            typeof userPinStep[chatId] === "object" &&
+            userPinStep[chatId].step === "confirm_new_pin"
+        ) {
+            if (text === userPinStep[chatId].newPin) {
+            await bot.sendMessage(chatId, `🔐 Saving your new pin...`);
+            try {
+                const payload = {
+                id: chatId,
+                change: false,
+                newPin: text
+                };
+                const response = await axios.put(`${API}/api/v1/pin/change`, payload);
+                if (response.status === 200) {
+                await bot.sendMessage(chatId, "✅ Your new pin has been saved successfully.");
+                } else {
+                await bot.sendMessage(chatId, "⚠️ Something went wrong while saving your pin.");
+                }
+            } catch (error) {
+                const errMsg = error.response?.data?.message || "❌ Failed to save your pin.";
+                await bot.sendMessage(chatId, errMsg);
+            }
+            delete userPinStep[chatId];
+            } else {
+            await bot.sendMessage(chatId, "❌ PINs do not match. Please start again with /pin_setting.");
+            delete userPinStep[chatId];
             }
             return;
         }
@@ -270,19 +281,17 @@ const telegramClient = () => {
 
         //send money 
         if (text == "/send_money") {
-            if (!userPinStep[chatId]) {
-                const pinStatus = await axios.get(`${API}/api/v1/check/pin/${chatId}`);
-                if (pinStatus.data.pin === "new") {
-                    return bot.sendMessage(chatId, "❌ You don't have a PIN set. Please set a PIN first using /pin_setting.");
-                }
-                if (pinStatus.data.pin === "old") {
-                    sendMoney[chatId] = { step: 1 };
-                    return bot.sendMessage(chatId,
-                        "👤 Who are you sending money to?\n\n" +
-                        "📩 Please enter the *recipient's Telegram ID* to continue.",
-                        { parse_mode: "Markdown" }
-                    );
-                }
+            const pinStatus = await axios.get(`${API}/api/v1/check/pin/${chatId}`);
+            if (pinStatus.data.pin === "new") {
+                return bot.sendMessage(chatId, "❌ You don't have a PIN set. Please set a PIN first using /pin_setting.");
+            }
+            if (pinStatus.data.pin === "old") {
+                sendMoney[chatId] = { step: 1 };
+                return bot.sendMessage(chatId,
+                    "👤 Who are you sending money to?\n\n" +
+                    "📩 Please enter the *recipient's Telegram ID* to continue.",
+                    { parse_mode: "Markdown" }
+                );
             }
         }
 
@@ -290,6 +299,11 @@ const telegramClient = () => {
             const recipientId = text;
             if (!/^\d+$/.test(recipientId)) {
                 return bot.sendMessage(chatId, "❌ *Invalid Telegram ID.*\n\nPlease enter a valid Telegram ID to proceed.", {
+                    parse_mode: "Markdown"
+                });
+            }
+            if (chatId == recipientId) {
+                return bot.sendMessage(chatId, "⚠️ *You cannot send money to yourself.*\n\nPlease enter a different Telegram ID.", {
                     parse_mode: "Markdown"
                 });
             }
@@ -324,6 +338,7 @@ const telegramClient = () => {
         }
 
         if (sendMoney[chatId]?.step === 3) {
+            await bot.deleteMessage(chatId, msg.message_id);
             await bot.sendMessage(chatId, "*⏳ Please wait...*\n\nVerifying your PIN and completing the transaction.", {
                 parse_mode: "Markdown"
             });
